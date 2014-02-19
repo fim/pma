@@ -1,0 +1,4 @@
+1. fix passwd hash
+2. fix default IntField() val
+3. add modify? command
+4. accept args from stdin for unsupervised installations

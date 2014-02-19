@@ -261,7 +261,9 @@ def ascii_table(row_collection, key_list, field_sep=' '*4):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-        description = "Create/Delete/List data types for MTA backends")
+        description = "Create/Delete/List data types for MTA backends",
+        epilog = "Before using the tool initialize the database by running \
+            {} init".format(sys.argv[0]))
     parser.add_argument("-t", "--traceback", action="store_true",
         help="print traceback on exceptions [default: False]")
     parser.add_argument("-b", "--backend", dest="backend",
@@ -272,7 +274,7 @@ if __name__ == "__main__":
         default=None, help="Connection string")
     parser.add_argument("objecttype",
         help="Object to operate on [Available objects: {}]".format(", ".join(types)))
-    parser.add_argument("command",
+    parser.add_argument("command", nargs='?',
         default="list", help="operation [Available commands: list, add, delete]")
     args = parser.parse_args()
 
