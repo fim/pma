@@ -1,0 +1,315 @@
+#!/usr/bin/env python
+
+import os
+import sys
+import argparse
+import inspect
+
+# Abstract Classes
+##################
+
+class PMAObject:
+    def fields(self):
+        return self._get_attrs()
+
+    def name(self):
+        return self.__class__.__name__.lower()
+
+    def _get_attrs(self):
+        attrs = {}
+        for i in inspect.getmembers(self, lambda a:not(inspect.isroutine(a)
+            or inspect.isbuiltin(a))):
+            if i[0].startswith("__"):
+                continue
+            attrs[i[0]] = i[1].get()
+        return attrs
+
+class DBAbstractHandler:
+    SQL_MAP = {
+        'str': "VARCHAR(255)",
+        'int': "INTEGER"
+    }
+
+    def __init__(self, *args, **kwargs):
+        self.connect(*args, **kwargs)
+
+    def __del__(self):
+        self.connection.close()
+
+    def connect(self, *args, **kwargs):
+        pass
+
+    def exists(self):
+        return False
+
+    def _execute(self, query):
+        self.cursor.execute(query)
+        self.connection.commit()
+        return self.cursor
+
+    def tosql(self, fields):
+        return ["{} {} NOT NULL".format(k, self.SQL_MAP[type(k).__name__]) for k in
+                fields.keys()]
+
+    def create(self, cclass):
+        return self._create(cclass.name(), cclass.fields())
+
+    def _create(self, table, fields):
+        return self._execute("CREATE TABLE IF NOT EXISTS {} ( id INTEGER \
+                PRIMARY KEY AUTOINCREMENT, {} );".format(
+                table, ','.join(self.tosql(fields))))
+
+    def add(self, cclass):
+        print cclass.__doc__
+        fields = cclass.fields()
+        for n in sorted(fields.keys()):
+            getattr(cclass, n).set(raw_input("%s: " % n) or
+                    getattr(cclass, n).get())
+
+        return self._add(cclass.name(), cclass.fields())
+
+    def _add(self, table, fields):
+        return self._execute("INSERT INTO \"{}\" ({}) VALUES({})".format(
+            table, ','.join(fields.keys()),
+            ','.join(["'%s'" % str(v) for v in fields.values()])
+            ))
+
+    def list(self, cclass):
+        return self._list(cclass.name())
+
+    def _list(self, table, where=None):
+        #XXX: add listing
+        return self._execute("SELECT * FROM \"{}\"".format(table))
+
+    def delete(self, cclass):
+        while True:
+            try:
+                object_id = int(raw_input('Object id to delete: '))
+            except:
+                sys.stdout.err("Please enter an int\n")
+                pass
+            else:
+                break
+
+        return self._delete(cclass.name(), {'id': object_id})
+
+    def _delete(self, table, where):
+        return self._execute("DELETE FROM \"{}\" WHERE {}".format(
+            table,
+            ','.join(['%s=%s' % (k,v) for k,v in where.items()])))
+
+class AbstractField:
+    default = None
+
+    def __init__(self, value=None, null=False):
+        self.null = null
+        if not value:
+            self.value = self.default
+        else:
+            self.set(value)
+
+    def dbtype(self):
+        return "abstr"
+
+    def clean(self, value):
+        return value
+
+    def set(self, value):
+        if value is None and not self.null:
+            raise Exception("Cannot accept empty value")
+        self.value = self.clean(value)
+
+    def get(self):
+        return self.value
+
+# DB Classes
+############
+
+def dict_factory(cursor, row):
+    d = {}
+    for idx,col in enumerate(cursor.description):
+        d[col[0]] = row[idx]
+    return d
+
+class SQLiteDBHandler(DBAbstractHandler):
+    def connect(self, dbname="mail.db"):
+        import sqlite3
+        self.connection = sqlite3.connect(dbname, check_same_thread = False)
+        self.connection.row_factory = dict_factory #sqlite3.Row
+        self.cursor = self.connection.cursor()
+
+    @staticmethod
+    def gettype():
+        return 'sqlite3'
+
+class PsqlDBHandler(DBAbstractHandler):
+    def connect(self, dbname="mail", host="localhost", user="root", password="", port=3306):
+        import psycopg2
+        import psycopg2.extras
+        self.connection = psycopg2.connect(
+            'dbname={} user={} password={} host={}'.format(
+                dbname, user, password, host))
+        self.cursor = self.connection.cursor(cursor_factory =
+                psycopg2.extras.RealDictCursor)
+
+    def _create(self, table, fields):
+        return self._execute("CREATE TABLE \"{}\" ( {}_id \
+                serial PRIMARY KEY, {} );".format(
+                table, table, ','.join(self.tosql(fields))))
+
+    @staticmethod
+    def gettype():
+        return 'pgsql'
+
+class MySQLDBHandler(DBAbstractHandler):
+    def connect(self, dbname="mail", host="localhost", user="root", password="", port=3306):
+        import MySQLdb
+        self.connection = MySQLdb.connect(self.host, self.user,
+            self.password, dbname)
+        self.cursor = self.connection.cursor(cursorclass=MySQLdb.cursors.DictCursor)
+
+    def _create(self, table, fields):
+        return self._execute("CREATE TABLE IF NOT EXISTS {} ( id INTEGER \
+                PRIMARY KEY AUTO_INCREMENT, {} );".format(
+                table, ','.join(self.tosql(fields))))
+
+    @staticmethod
+    def gettype():
+        return 'mysql'
+
+class StrField(AbstractField):
+    def clean(self, value):
+        return str(value)
+
+class HashField(StrField):
+    def clean(self, value):
+        import uuid, hashlib
+        salt = uuid.uuid4().hex
+        return "{}.{}".format(salt,
+                hashlib.md5(salt+value).hexdigest())
+
+class IntField(AbstractField):
+    def clean(self, value):
+        return int(value)
+
+class BoolField(IntField):
+    def clean(self, value):
+        if value in [True, '[Yy][Ee][sS]', 1]:
+            return True
+        return False
+
+    def get(self):
+        if self.value:
+            return 1
+
+        return 0
+
+# PMA Classes
+#############
+class User(PMAObject):
+    """
+    active(bool): 1 for True 0 for False [1]
+    email(str): The user's login []
+    password(str): md5 crypt of the user's password []
+    quota(int): Quota in bytes [0]
+    """
+    email = StrField()
+    password = HashField("mekmitasdigoat")
+    quota = IntField(0)
+    active = BoolField(True)
+
+class Domain(PMAObject):
+    """
+    active(bool): 1 for True 0 for False [1]
+    domain(str): The domain name []
+    """
+    domain = StrField()
+    active = BoolField(True)
+
+class Alias(PMAObject):
+    """
+    destination(str): Destination address []
+    source(str): Source address []
+    """
+    source = StrField()
+    destination = StrField()
+
+class Transport(PMAObject):
+    """
+    domain(str): The domain associated with the transport []
+    transport(str): Transport mechanism []
+    """
+    domain = StrField()
+    transport = StrField()
+
+# Logic
+#######
+types = [c[0].lower() for c in inspect.getmembers(sys.modules[__name__], lambda a:inspect.isclass(a) and
+        issubclass(a, PMAObject) and a.__name__ != "PMAObject" )]
+
+dbhandlers = dict( (i[1].gettype(),i[1]) for i in inspect.getmembers(sys.modules[__name__],
+        lambda a:inspect.isclass(a) and a.__name__.endswith("DBHandler")))
+
+def ascii_table(row_collection, key_list, field_sep=' '*4):
+  row_collection.insert(0, dict((k,k) for k in key_list))
+  return '\n'.join([field_sep.join([str(row[col]).ljust(width)
+    for (col, width) in zip(key_list, [max(map(len, column_vector))
+      for column_vector in [ [str(v[k])
+        for v in row_collection]
+          for k in key_list ]])])
+            for row in row_collection])
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description = "Create/Delete/List data types for MTA backends")
+    parser.add_argument("-t", "--traceback", action="store_true",
+        help="print traceback on exceptions [default: False]")
+    parser.add_argument("-b", "--backend", dest="backend",
+        default="sqlite3",
+        help="database backend [ Available options: {} | default:\
+        sqlite3]".format(', '.join(dbhandlers.keys())))
+    parser.add_argument("-c", "--connection", dest="cs",
+        default=None, help="Connection string")
+    parser.add_argument("objecttype",
+        help="Object to operate on [Available objects: {}]".format(", ".join(types)))
+    parser.add_argument("command",
+        default="list", help="operation [Available commands: list, add, delete]")
+    args = parser.parse_args()
+
+    if args.backend not in dbhandlers.keys():
+        sys.stderr.write("No DB driver named {}.\nAvailable options are: {}\n".format(
+            args.backend, dbhandlers.keys()))
+        sys.exit(1)
+
+    if args.cs:
+        db = dbhandlers[args.backend](**dict(e.split("=") for e in args.cs.split(';')))
+    else:
+        db = dbhandlers[args.backend]()
+
+    if args.objecttype == 'init':
+        print "Initializing database"
+        for t in types:
+            cclass = getattr(sys.modules[__name__], t.title())()
+            db.create(cclass)
+        sys.exit(0)
+
+    if args.objecttype == 'help' or args.objecttype not in types:
+        parser.print_help()
+        sys.exit(1)
+
+    try:
+        cclass = getattr(sys.modules[__name__], args.objecttype.title())()
+        cursor = getattr(db, args.command)(cclass)
+
+        if cursor.description:
+            print ascii_table(([r for r in cursor]), [tup[0] for tup in cursor.description])
+    except SystemExit:
+        sys.exit()
+    except:
+        import traceback
+        if args.traceback:
+            traceback.print_exc()
+        else:
+            formatted_lines = traceback.format_exc().splitlines()
+            sys.stderr.write(formatted_lines[-1])
+        sys.exit(1)
