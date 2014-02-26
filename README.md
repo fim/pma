@@ -2,7 +2,7 @@ PMA - Postfix Mail Accountant
 =============================
 
 This is a simple tool to help manage accounting backends for simple mail
-servers (primarily tested with postfix).
+servers (primarily tested with postfix/dovecot).
 
 Requirements
 -------------
@@ -86,9 +86,9 @@ Currently sqlite3, mysql and psql are supported.
  Example:
 
  ```sh
- > pma -b sqlite -c "dbname=/etc/mail/mail.db" init
+ > pma -b sqlite -s "dbname=/etc/mail/mail.db" init
  Initializing database
- > pma -b sqlite -c "dbname=/etc/mail/mail.db" domain add
+ > pma -b sqlite -s "dbname=/etc/mail/mail.db" domain add
  ...
  ```
 
@@ -99,9 +99,9 @@ Currently sqlite3, mysql and psql are supported.
  Example:
 
  ```sh
- > pma -b mysql -c "host=127.0.0.1;user=dbadmin;pass=dbpass;dbname=mail" init
+ > pma -b mysql -s "host=127.0.0.1;user=dbadmin;pass=dbpass;dbname=mail" init
  Initializing database
- > pma -b mysql -c "host=127.0.0.1;user=dbadmin;pass=dbpass;dbname=mail" domain add
+ > pma -b mysql -s "host=127.0.0.1;user=dbadmin;pass=dbpass;dbname=mail" domain add
  ...
  ```
  - PSQL
@@ -111,8 +111,8 @@ Currently sqlite3, mysql and psql are supported.
  Example:
 
  ```sh
- > pma -b pssql -c "host=127.0.0.1;user=dbadmin;pass=dbpass;dbname=mail" init
+ > pma -b pgsql -s "host=127.0.0.1;user=dbadmin;pass=dbpass;dbname=mail" init
  Initializing database
- > pma -b pssql -c "host=127.0.0.1;user=dbadmin;pass=dbpass;dbname=mail" domain add
+ > pma -b pgsql -s "host=127.0.0.1;user=dbadmin;pass=dbpass;dbname=mail" domain add
  ...
  ```
