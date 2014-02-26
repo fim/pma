@@ -1,0 +1,2 @@
+backend:mysql
+connection_settings:dbname=mail;host=localhost;user=root;password=spanakotyropita

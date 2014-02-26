@@ -2,6 +2,8 @@
 
 import os
 import sys
+import ConfigParser
+import StringIO
 import argparse
 import inspect
 
@@ -30,11 +32,20 @@ class DBAbstractHandler:
         'int': "INTEGER"
     }
 
+    SQL_ADD = 'INSERT INTO %(table)s (%(keys)s) VALUES(%(values)s);'
+    SQL_DELETE = 'DELETE FROM %(table)s WHERE %(where)s;'
+    SQL_LIST = 'SELECT * FROM %(table)s;'
+    SQL_CREATE = 'CREATE TABLE IF NOT EXISTS %(table)s ( id INTEGER PRIMARY KEY \
+        AUTOINCREMENT, %(fields)s );'
+
     def __init__(self, *args, **kwargs):
         self.connect(*args, **kwargs)
 
     def __del__(self):
-        self.connection.close()
+        try:
+            self.connection.close()
+        except:
+            pass
 
     def connect(self, *args, **kwargs):
         pass
@@ -48,6 +59,7 @@ class DBAbstractHandler:
         return self.cursor
 
     def tosql(self, fields):
+        # FIXME: Everything gets treated as STR()
         return ["{} {} NOT NULL".format(k, self.SQL_MAP[type(k).__name__]) for k in
                 fields.keys()]
 
@@ -55,9 +67,9 @@ class DBAbstractHandler:
         return self._create(cclass.name(), cclass.fields())
 
     def _create(self, table, fields):
-        return self._execute("CREATE TABLE IF NOT EXISTS {} ( id INTEGER \
-                PRIMARY KEY AUTOINCREMENT, {} );".format(
-                table, ','.join(self.tosql(fields))))
+        return self._execute(self.SQL_CREATE % {
+            'table': table,
+            'fields': ','.join(self.tosql(fields))})
 
     def add(self, cclass):
         print cclass.__doc__
@@ -69,34 +81,28 @@ class DBAbstractHandler:
         return self._add(cclass.name(), cclass.fields())
 
     def _add(self, table, fields):
-        return self._execute("INSERT INTO \"{}\" ({}) VALUES({})".format(
-            table, ','.join(fields.keys()),
-            ','.join(["'%s'" % str(v) for v in fields.values()])
-            ))
+        return self._execute(self.SQL_ADD % {
+            'table': table,
+            'keys': ','.join(fields.keys()),
+            'values': ','.join(["'%s'" % str(v) for v in fields.values()])
+            })
 
     def list(self, cclass):
         return self._list(cclass.name())
 
     def _list(self, table, where=None):
         #XXX: add listing
-        return self._execute("SELECT * FROM \"{}\"".format(table))
+        return self._execute(self.SQL_LIST % { 'table': table})
 
     def delete(self, cclass):
-        while True:
-            try:
-                object_id = int(raw_input('Object id to delete: '))
-            except:
-                sys.stdout.err("Please enter an int\n")
-                pass
-            else:
-                break
-
-        return self._delete(cclass.name(), {'id': object_id})
+        where = None
+        while not where:
+            where = raw_input('Enter where statement (eg: "id = 1"): ')
+        return self._delete(cclass.name(), where)
 
     def _delete(self, table, where):
-        return self._execute("DELETE FROM \"{}\" WHERE {}".format(
-            table,
-            ','.join(['%s=%s' % (k,v) for k,v in where.items()])))
+        return self._execute(self.SQL_DELETE % {
+            'table': table, 'where': where} )
 
 class AbstractField:
     default = None
@@ -143,6 +149,12 @@ class SQLiteDBHandler(DBAbstractHandler):
         return 'sqlite3'
 
 class PsqlDBHandler(DBAbstractHandler):
+    SQL_ADD = 'INSERT INTO "%(table)s" (%(keys)s) VALUES(%(values)s);'
+    SQL_DELETE = 'DELETE FROM "%(table)s" WHERE %(where)s;'
+    SQL_LIST = 'SELECT * FROM %(table)s'
+    SQL_CREATE = 'CREATE TABLE IF NOT EXISTS %(table)s ( %(table)s_id serial PRIMARY KEY \
+        , %(fields)s );',
+
     def connect(self, dbname="mail", host="localhost", user="root", password="", port=3306):
         import psycopg2
         import psycopg2.extras
@@ -162,16 +174,13 @@ class PsqlDBHandler(DBAbstractHandler):
         return 'pgsql'
 
 class MySQLDBHandler(DBAbstractHandler):
+    SQL_CREATE = 'CREATE TABLE IF NOT EXISTS %(table)s ( id INTEGER PRIMARY KEY \
+        AUTO_INCREMENT, %(fields)s );'
+
     def connect(self, dbname="mail", host="localhost", user="root", password="", port=3306):
         import MySQLdb
-        self.connection = MySQLdb.connect(self.host, self.user,
-            self.password, dbname)
+        self.connection = MySQLdb.connect(host, user, password, dbname)
         self.cursor = self.connection.cursor(cursorclass=MySQLdb.cursors.DictCursor)
-
-    def _create(self, table, fields):
-        return self._execute("CREATE TABLE IF NOT EXISTS {} ( id INTEGER \
-                PRIMARY KEY AUTO_INCREMENT, {} );".format(
-                table, ','.join(self.tosql(fields))))
 
     @staticmethod
     def gettype():
@@ -183,10 +192,10 @@ class StrField(AbstractField):
 
 class HashField(StrField):
     def clean(self, value):
-        import uuid, hashlib
-        salt = uuid.uuid4().hex
-        return "{}.{}".format(salt,
-                hashlib.md5(salt+value).hexdigest())
+        import crypt
+        return crypt.crypt(value,
+            os.urandom(1).encode('base_64').strip('==\n'))
+
 
 class IntField(AbstractField):
     def clean(self, value):
@@ -260,8 +269,26 @@ def ascii_table(row_collection, key_list, field_sep=' '*4):
             for row in row_collection])
 
 if __name__ == "__main__":
+
+    confp = argparse.ArgumentParser(add_help=False)
+    confp.add_argument("-c", "--config", metavar="FILE",
+        default="~/.pmarc", help="configuration file")
+    args, remaining_argv = confp.parse_known_args()
+
+    defaults = {}
+    if args.config:
+        try:
+            rawconf = StringIO.StringIO('[root]\n' +
+                open(os.path.expanduser(args.config), 'r').read())
+            config = ConfigParser.SafeConfigParser()
+            config.readfp(rawconf)
+            defaults = dict(config.items("root"))
+        except Exception,e:
+            pass
+
     parser = argparse.ArgumentParser(
         description = "Create/Delete/List data types for MTA backends",
+        parents = [confp],
         epilog = "Before using the tool initialize the database by running \
             {} init".format(sys.argv[0]))
     parser.add_argument("-t", "--traceback", action="store_true",
@@ -270,38 +297,47 @@ if __name__ == "__main__":
         default="sqlite3",
         help="database backend [ Available options: {} | default:\
         sqlite3]".format(', '.join(dbhandlers.keys())))
-    parser.add_argument("-c", "--connection", dest="cs",
-        default=None, help="Connection string")
+    parser.add_argument("-s", "--settings", dest="connection_settings",
+        default=None, help="Connection settings in a single string separated \
+        by ';'")
     parser.add_argument("objecttype",
         help="Object to operate on [Available objects: {}]".format(", ".join(types)))
     parser.add_argument("command", nargs='?',
         default="list", help="operation [Available commands: list, add, delete]")
-    args = parser.parse_args()
+    parser.set_defaults(**defaults)
+    args = parser.parse_args(remaining_argv)
 
     if args.backend not in dbhandlers.keys():
         sys.stderr.write("No DB driver named {}.\nAvailable options are: {}\n".format(
             args.backend, dbhandlers.keys()))
         sys.exit(1)
 
-    if args.cs:
-        db = dbhandlers[args.backend](**dict(e.split("=") for e in args.cs.split(';')))
-    else:
-        db = dbhandlers[args.backend]()
-
-    if args.objecttype == 'init':
-        print "Initializing database"
-        for t in types:
-            cclass = getattr(sys.modules[__name__], t.title())()
-            db.create(cclass)
-        sys.exit(0)
-
-    if args.objecttype == 'help' or args.objecttype not in types:
-        parser.print_help()
-        sys.exit(1)
-
     try:
+        if args.connection_settings:
+            db = dbhandlers[args.backend](**dict(e.split("=") for e in args.connection_settings.split(';')))
+        else:
+            db = dbhandlers[args.backend]()
+
+        if args.objecttype == 'init':
+            print "Initializing database"
+            for t in types:
+                cclass = getattr(sys.modules[__name__], t.title())()
+                db.create(cclass)
+            sys.exit(0)
+
+        if args.objecttype == 'help' or args.objecttype not in types:
+            sys.stderr.write("Unknown object {}\n".format(args.objecttype))
+            sys.stderr.write("Available options {}\n".format(', '.join(types)))
+            sys.exit(1)
+
         cclass = getattr(sys.modules[__name__], args.objecttype.title())()
-        cursor = getattr(db, args.command)(cclass)
+
+        try:
+            cursor = getattr(db, args.command)(cclass)
+        except AttributeError:
+            sys.stderr.write("Unknown command {}\n".format(args.command))
+            sys.stderr.write("Available options add, list, delete\n")
+            sys.exit(1)
 
         if cursor.description:
             print ascii_table(([r for r in cursor]), [tup[0] for tup in cursor.description])
