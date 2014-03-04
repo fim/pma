@@ -1,0 +1,71 @@
+main.cf
+=======
+[...]
+virtual_alias_maps = proxy:mysql:/etc/postfix/mysql-virtual_forwardings.cf, mysql:/etc/postfix/mysql-virtual_email2email.cf
+virtual_mailbox_domains = proxy:mysql:/etc/postfix/mysql-virtual_domains.cf
+virtual_mailbox_maps = proxy:mysql:/etc/postfix/mysql-virtual_mailboxes.cf
+transport_maps = proxy:mysql:/etc/postfix/mysql-virtual_transports.cf
+virtual_mailbox_limit_maps = proxy:mysql:/etc/postfix/mysql-virtual_mailbox_limit_maps.cf
+
+
+
+mysql-virtual_domains.cf
+========================
+user = mail
+password = passw0rd
+dbname = mail
+hosts = localhost
+query = SELECT domain
+        FROM domain
+        WHERE domain = '%s'
+
+mysql-virtual_email2email.cf
+============================
+user = mail
+password = passw0rd
+dbname = mail
+query = SELECT email
+        FROM user
+        WHERE email = '%s'
+hosts = 127.0.0.1
+
+mysql-virtual_forwardings.cf
+============================
+user = mail
+password = passw0rd
+dbname = mail
+query = SELECT destination
+        FROM alias
+        WHERE source = '%s'
+hosts = localhost
+
+mysql-virtual_mailbox_limit_maps.cf
+===================================
+user = mail
+password = passw0rd
+dbname = mail
+query = SELECT quota
+        FROM user
+        WHERE email = '%s'
+hosts = localhost
+
+mysql-virtual_mailboxes.cf
+==========================
+user = mail
+password = passw0rd
+dbname = mail
+query = SELECT CONCAT(SUBSTRING_INDEX(email,'@',-1),'/',SUBSTRING_INDEX(email,'@',1),'/')
+        FROM user
+        WHERE email = '%s'
+hosts = localhost
+
+mysql-virtual_transports.cf
+===========================
+user = mail
+password = passw0rd
+dbname = mail
+query = SELECT transport
+        FROM transport
+        WHERE domain = '%s'
+hosts = localhost
+
